@@ -4,115 +4,82 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
 from transformers import pipeline
 from langchain_community.llms import HuggingFacePipeline
+import tempfile
 
-st.set_page_config(page_title="PDF AI Assistant", layout="wide")
+st.set_page_config(page_title="PDF AI Assistant", page_icon="📄", layout="wide")
 
-# ---------------- Sidebar ----------------
+# Sidebar
 st.sidebar.title("📄 PDF AI Assistant")
 st.sidebar.write("Upload a PDF and chat with it.")
-st.sidebar.write("Built by Balu 🚀")
+st.sidebar.markdown("---")
+if st.sidebar.button("🗑 Clear Chat"):
+    st.session_state.messages = []
 
-st.title("💬 Chat with your PDF")
+# Chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# ---------------- Load LLM ----------------
-@st.cache_resource
-def load_llm():
-    text_pipe = pipeline(
-        task="text-generation",
-        model="google/flan-t5-small",
-        max_new_tokens=150,
-        do_sample=False
-    )
-    return HuggingFacePipeline(pipeline=text_pipe)
+# Upload PDF
+uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
-llm = load_llm()
+if uploaded_file:
 
-# ---------------- Upload PDF ----------------
-uploaded_file = st.file_uploader("Upload your PDF file", type="pdf")
+    with st.spinner("Processing PDF... ⏳"):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(uploaded_file.read())
+            tmp_path = tmp_file.name
 
-if uploaded_file is not None:
-
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.read())
-
-    # ---------------- Process PDF ----------------
-    @st.cache_resource
-    def process_pdf():
-        loader = PyPDFLoader("temp.pdf")
+        loader = PyPDFLoader(tmp_path)
         documents = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=400,
-            chunk_overlap=50
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
         )
-        docs = splitter.split_documents(documents)
+        docs = text_splitter.split_documents(documents)
 
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        vectorstore = FAISS.from_documents(docs, embeddings)
+        db = FAISS.from_documents(docs, embeddings)
 
-        # Custom clean prompt
-        custom_prompt = PromptTemplate(
-            input_variables=["context", "question"],
-            template="""
-Answer the question using only the context below.
-If the answer is not in the context, say "I don't know".
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:
-"""
+        pipe = pipeline(
+            "text2text-generation",
+            model="google/flan-t5-base",
+            max_length=512,
         )
 
-        qa_chain = RetrievalQA.from_chain_type(
+        llm = HuggingFacePipeline(pipeline=pipe)
+
+        qa = RetrievalQA.from_chain_type(
             llm=llm,
-            retriever=vectorstore.as_retriever(search_kwargs={"k": 2}),
-            chain_type_kwargs={"prompt": custom_prompt}
+            chain_type="stuff",
+            retriever=db.as_retriever()
         )
-
-        return qa_chain
-
-    with st.spinner("Processing PDF... ⏳"):
-        qa = process_pdf()
 
     st.success("PDF processed successfully! ✅")
 
-    # ---------------- Chat Memory ----------------
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # Display chat history
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    # Show old messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # User input
+    if prompt := st.chat_input("Ask something about your PDF..."):
 
-    # Chat input
-    user_input = st.chat_input("Ask something about your PDF...")
-
-    if user_input:
-        st.session_state.messages.append(
-            {"role": "user", "content": user_input}
-        )
+        st.session_state.messages.append({"role": "user", "content": prompt})
 
         with st.chat_message("user"):
-            st.markdown(user_input)
-
-        with st.spinner("Thinking... 🤔"):
-            response = qa.invoke({"query": user_input})
-            answer = response["result"]
-
-        st.session_state.messages.append(
-            {"role": "assistant", "content": answer}
-        )
+            st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            st.markdown(answer)
+            with st.spinner("Thinking... 🤖"):
+                response = qa.run(prompt)
+                st.markdown(response)
+
+        st.session_state.messages.append(
+            {"role": "assistant", "content": response}
+        )
