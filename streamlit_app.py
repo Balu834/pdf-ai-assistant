@@ -1,102 +1,78 @@
 import streamlit as st
 import os
-import tempfile
-from langchain_community.document_loaders import PyPDFLoader
+
+from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
 
-# ------------------------
-# Page Config
-# ------------------------
-st.set_page_config(page_title="PDF AI Assistant", page_icon="📄")
 
-st.sidebar.title("📄 PDF AI Assistant")
-st.sidebar.write("Upload a PDF and chat with it.")
+# ------------------ PAGE CONFIG ------------------
 
-if st.sidebar.button("Clear Chat"):
-    st.session_state.messages = []
+st.set_page_config(page_title="PDF AI Assistant", layout="wide")
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+st.title("📄 PDF AI Assistant")
+st.write("Upload a PDF and chat with it.")
 
-if "qa_chain" not in st.session_state:
-    st.session_state.qa_chain = None
+st.sidebar.markdown("### Built by Balu 🚀")
 
-# ------------------------
-# Get OpenAI Key from Secrets
-# ------------------------
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+# ------------------ OPENAI KEY ------------------
 
-# ------------------------
-# File Upload
-# ------------------------
-uploaded_file = st.file_uploader("Upload PDF", type="pdf")
+if "OPENAI_API_KEY" in st.secrets:
+    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+else:
+    st.error("OpenAI API key not found. Please add it in Streamlit Secrets.")
+    st.stop()
+
+# ------------------ FILE UPLOAD ------------------
+
+uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
 if uploaded_file:
 
-    with st.spinner("Processing PDF..."):
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_file.read())
 
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            tmp_file.write(uploaded_file.read())
-            tmp_path = tmp_file.name
+    st.success("PDF uploaded successfully ✅")
 
-        loader = PyPDFLoader(tmp_path)
-        documents = loader.load()
+    # Load PDF
+    loader = PyPDFLoader("temp.pdf")
+    documents = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
+    # Split text
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
+    )
+    docs = text_splitter.split_documents(documents)
 
-        docs = splitter.split_documents(documents)
+    # Embeddings
+    embeddings = OpenAIEmbeddings()
 
-        embeddings = OpenAIEmbeddings(
-            openai_api_key=OPENAI_API_KEY
-        )
+    # Vector DB
+    db = FAISS.from_documents(docs, embeddings)
 
-        db = FAISS.from_documents(docs, embeddings)
+    # LLM
+    llm = ChatOpenAI(
+        temperature=0,
+        model_name="gpt-3.5-turbo"
+    )
 
-        llm = ChatOpenAI(
-            temperature=0,
-            model="gpt-3.5-turbo",
-            openai_api_key=OPENAI_API_KEY
-        )
+    # QA Chain
+    qa = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=db.as_retriever()
+    )
 
-        qa = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=db.as_retriever()
-        )
+    # ------------------ CHAT ------------------
 
-        st.session_state.qa_chain = qa
+    query = st.text_input("Ask something about your PDF")
 
-    st.success("PDF processed successfully! ✅")
-
-# ------------------------
-# Chat Interface
-# ------------------------
-if st.session_state.qa_chain:
-
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if prompt := st.chat_input("Ask something about your PDF..."):
-
-        st.session_state.messages.append(
-            {"role": "user", "content": prompt}
-        )
-
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response = st.session_state.qa_chain.run(prompt)
-                st.markdown(response)
-
-        st.session_state.messages.append(
-            {"role": "assistant", "content": response}
-        )
+    if query:
+        with st.spinner("Thinking..."):
+            result = qa.run(query)
+        st.write("### Answer:")
+        st.write(result)
