@@ -1,78 +1,66 @@
 import streamlit as st
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.llms import HuggingFacePipeline
+from langchain.chains import RetrievalQA
+from transformers import pipeline
+import tempfile
 import os
 
-from langchain.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import RetrievalQA
-
-
-# ------------------ PAGE CONFIG ------------------
-
-st.set_page_config(page_title="PDF AI Assistant", layout="wide")
-
+st.set_page_config(page_title="PDF AI Assistant")
 st.title("📄 PDF AI Assistant")
-st.write("Upload a PDF and chat with it.")
+st.write("Upload a PDF and chat with it (100% Free Version)")
 
-st.sidebar.markdown("### Built by Balu 🚀")
-
-# ------------------ OPENAI KEY ------------------
-
-if "OPENAI_API_KEY" in st.secrets:
-    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-else:
-    st.error("OpenAI API key not found. Please add it in Streamlit Secrets.")
-    st.stop()
-
-# ------------------ FILE UPLOAD ------------------
-
-uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
 
 if uploaded_file:
 
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.read())
+    # Save PDF temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        tmp_path = tmp_file.name
 
     st.success("PDF uploaded successfully ✅")
 
     # Load PDF
-    loader = PyPDFLoader("temp.pdf")
+    loader = PyPDFLoader(tmp_path)
     documents = loader.load()
 
     # Split text
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        chunk_size=500,
+        chunk_overlap=50
     )
     docs = text_splitter.split_documents(documents)
 
-    # Embeddings
-    embeddings = OpenAIEmbeddings()
-
-    # Vector DB
-    db = FAISS.from_documents(docs, embeddings)
-
-    # LLM
-    llm = ChatOpenAI(
-        temperature=0,
-        model_name="gpt-3.5-turbo"
+    # Free Embeddings
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    # QA Chain
+    db = FAISS.from_documents(docs, embeddings)
+
+    # FREE HuggingFace LLM
+    pipe = pipeline(
+        "text-generation",
+        model="google/flan-t5-small",
+        max_new_tokens=256
+    )
+
+    llm = HuggingFacePipeline(pipeline=pipe)
+
     qa = RetrievalQA.from_chain_type(
         llm=llm,
-        chain_type="stuff",
         retriever=db.as_retriever()
     )
 
-    # ------------------ CHAT ------------------
-
-    query = st.text_input("Ask something about your PDF")
+    query = st.text_input("Ask a question about your PDF")
 
     if query:
-        with st.spinner("Thinking..."):
-            result = qa.run(query)
+        result = qa.run(query)
         st.write("### Answer:")
         st.write(result)
+
+    os.remove(tmp_path)
