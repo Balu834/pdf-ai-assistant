@@ -1,8 +1,6 @@
-streamlit==1.32.0
+streamlit
 langchain==0.1.16
-langchain-community==0.0.32
-langchain-core==0.1.46
-pypdf
+openai
 faiss-cpu
-sentence-transformers
-huggingface-hub
+pypdf
+tiktoken
