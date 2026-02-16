@@ -1,6 +1,8 @@
 streamlit
-langchain==0.1.16
-openai
+langchain
+langchain-community
 faiss-cpu
+sentence-transformers
+transformers
 pypdf
-tiktoken
+torch
